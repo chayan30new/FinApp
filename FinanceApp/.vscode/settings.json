@@ -1,0 +1,7 @@
+{
+    "tts.runner": "a2ewhale",
+    "python.languageServer": "Pylance",
+    "python.analysis.extraPaths": [
+        "C:\\Users\\Public\\Programs\\tts4\\lib"
+    ]
+}
