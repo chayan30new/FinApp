@@ -6,6 +6,7 @@ import '../providers/watchlist_provider.dart';
 import '../utils/calculations.dart';
 import '../utils/stock_symbols.dart';
 import '../services/stock_price_service.dart';
+import 'watchlist_detail_screen.dart';
 
 class WatchlistScreen extends StatelessWidget {
   const WatchlistScreen({super.key});
@@ -490,29 +491,38 @@ class _WatchlistItemCardState extends State<WatchlistItemCard> {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        children: [
-          ListTile(
-            contentPadding: const EdgeInsets.all(16),
-            leading: CircleAvatar(
-              backgroundColor: Colors.blue,
-              child: Text(
-                widget.item.symbol.substring(0, widget.item.symbol.length > 3 ? 3 : widget.item.symbol.length),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => WatchlistDetailScreen(item: widget.item),
+            ),
+          );
+        },
+        child: Column(
+          children: [
+            ListTile(
+              contentPadding: const EdgeInsets.all(16),
+              leading: CircleAvatar(
+                backgroundColor: Colors.blue,
+                child: Text(
+                  widget.item.symbol.substring(0, widget.item.symbol.length > 3 ? 3 : widget.item.symbol.length),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
                 ),
               ),
-            ),
-            title: Text(
-              widget.item.symbol,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+              title: Text(
+                widget.item.symbol,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
               ),
-            ),
-            subtitle: Column(
+              subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const SizedBox(height: 4),
@@ -781,7 +791,8 @@ class _WatchlistItemCardState extends State<WatchlistItemCard> {
                 ],
               ),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }
