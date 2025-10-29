@@ -19,6 +19,7 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
   final _descriptionController = TextEditingController();
   final _amountController = TextEditingController();
   final _quantityController = TextEditingController();
+  final _tickerController = TextEditingController();
   DateTime _selectedDate = DateTime.now();
   bool _isLoading = false;
 
@@ -28,6 +29,7 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
     if (widget.investment != null) {
       _nameController.text = widget.investment!.name;
       _descriptionController.text = widget.investment!.description ?? '';
+      _tickerController.text = widget.investment!.tickerSymbol ?? '';
     }
   }
 
@@ -37,6 +39,7 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
     _descriptionController.dispose();
     _amountController.dispose();
     _quantityController.dispose();
+    _tickerController.dispose();
     super.dispose();
   }
 
@@ -72,6 +75,9 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
             : _descriptionController.text,
         transactions: widget.investment?.transactions ?? [],
         createdAt: widget.investment?.createdAt ?? DateTime.now(),
+        tickerSymbol: _tickerController.text.isEmpty
+            ? null
+            : _tickerController.text.toUpperCase(),
       );
 
       if (widget.investment == null) {
@@ -95,6 +101,13 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
 
         await provider.addInvestment(investment);
         await provider.addTransaction(investment.id, transaction);
+        
+        // Set initial current value with date
+        final investmentWithValue = investment.copyWith(
+          currentValue: initialAmount,
+          currentValueDate: _selectedDate,
+        );
+        await provider.updateInvestment(investmentWithValue);
       } else {
         await provider.updateInvestment(investment);
       }
@@ -154,6 +167,18 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
                 prefixIcon: Icon(Icons.description),
               ),
               maxLines: 3,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _tickerController,
+              decoration: const InputDecoration(
+                labelText: 'Ticker Symbol (Optional)',
+                hintText: 'e.g., VAS.AX for Australian stocks',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.show_chart),
+                helperText: 'Add .AX suffix for ASX stocks (e.g., CBA.AX, BHP.AX)',
+              ),
+              textCapitalization: TextCapitalization.characters,
             ),
             if (!isEdit) ...[
               const SizedBox(height: 16),

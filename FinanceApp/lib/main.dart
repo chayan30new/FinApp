@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'providers/investment_provider.dart';
+import 'providers/watchlist_provider.dart';
 
 void main() {
   runApp(const MyApp());
@@ -12,8 +13,11 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => InvestmentProvider(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => InvestmentProvider()),
+        ChangeNotifierProvider(create: (context) => WatchlistProvider()),
+      ],
       child: MaterialApp(
         title: 'Investment Tracker',
         theme: ThemeData(

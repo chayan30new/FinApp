@@ -5,6 +5,7 @@ import '../models/investment.dart';
 import '../utils/calculations.dart';
 import 'add_investment_screen.dart';
 import 'investment_detail_screen.dart';
+import 'watchlist_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -15,6 +16,20 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Investment Tracker'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.playlist_add_check),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const WatchlistScreen(),
+                ),
+              );
+            },
+            tooltip: 'Watchlist',
+          ),
+        ],
       ),
       body: Consumer<InvestmentProvider>(
         builder: (context, provider, child) {

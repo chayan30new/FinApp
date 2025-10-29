@@ -5,6 +5,8 @@ import '../models/investment.dart';
 import '../models/transaction.dart';
 import '../providers/investment_provider.dart';
 import '../utils/calculations.dart';
+import '../widgets/investment_chart.dart';
+import '../widgets/live_price_widget.dart';
 import 'add_investment_screen.dart';
 
 class InvestmentDetailScreen extends StatefulWidget {
@@ -86,6 +88,19 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // Live Price Widget (if ticker symbol is set)
+        if (investment.tickerSymbol != null && investment.tickerSymbol!.isNotEmpty)
+          LivePriceWidget(
+            investment: investment,
+            onPriceUpdate: (newValue) async {
+              final provider = Provider.of<InvestmentProvider>(context, listen: false);
+              await provider.updateInvestmentValue(
+                investment.id,
+                newValue,
+                DateTime.now(),
+              );
+            },
+          ),
         // Performance Card
         Card(
           elevation: 4,
@@ -185,6 +200,9 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        // Investment Growth Chart
+        InvestmentChart(investment: investment),
         const SizedBox(height: 16),
         // Transactions
         Text(
@@ -534,9 +552,10 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                   finalCurrentValue = updatedInv.effectiveCurrentValue;
                 }
 
-                // Update current value
+                // Update current value with the transaction date
                 final finalInvestment = updatedInv.copyWith(
                   currentValue: finalCurrentValue,
+                  currentValueDate: selectedDate,
                 );
                 await provider.updateInvestment(finalInvestment);
 
@@ -794,81 +813,148 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
     final valueController = TextEditingController(
       text: investment.currentValue?.toString() ?? '',
     );
+    
+    // Find the latest date we should allow updates for
+    DateTime? latestDate = investment.currentValueDate;
+    
+    // Also check the latest transaction date
+    if (investment.transactions.isNotEmpty) {
+      final latestTransactionDate = investment.transactions
+          .map((t) => t.date)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      
+      if (latestDate == null || latestTransactionDate.isAfter(latestDate)) {
+        latestDate = latestTransactionDate;
+      }
+    }
+    
+    DateTime selectedDate = DateTime.now();
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Update Current Market Value'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Enter the current market value of this investment.',
-              style: TextStyle(color: Colors.grey[700], fontSize: 14),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Net Invested: ${FinancialCalculations.formatCurrency(investment.netInvested)}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: valueController,
-              decoration: const InputDecoration(
-                labelText: 'Current Market Value',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.attach_money),
-                hintText: 'e.g., 12500',
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Update Current Market Value'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Enter the current market value of this investment.',
+                style: TextStyle(color: Colors.grey[700], fontSize: 14),
               ),
-              keyboardType: TextInputType.number,
-              autofocus: true,
+              const SizedBox(height: 8),
+              Text(
+                'Net Invested: ${FinancialCalculations.formatCurrency(investment.netInvested)}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              if (latestDate != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Latest update: ${DateFormat('MMM dd, yyyy').format(latestDate)}',
+                  style: TextStyle(color: Colors.blue[700], fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 16),
+              TextField(
+                controller: valueController,
+                decoration: const InputDecoration(
+                  labelText: 'Current Market Value',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.attach_money),
+                  hintText: 'e.g., 12500',
+                ),
+                keyboardType: TextInputType.number,
+                autofocus: true,
+              ),
+              const SizedBox(height: 16),
+              InkWell(
+                onTap: () async {
+                  final DateTime? picked = await showDatePicker(
+                    context: context,
+                    initialDate: selectedDate,
+                    firstDate: latestDate ?? DateTime(2000),
+                    lastDate: DateTime.now(),
+                    helpText: 'Select value update date',
+                  );
+                  if (picked != null) {
+                    setState(() {
+                      selectedDate = picked;
+                    });
+                  }
+                },
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Value Date',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.calendar_today),
+                  ),
+                  child: Text(
+                    DateFormat('MMM dd, yyyy').format(selectedDate),
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tip: Check your investment app/statement for the latest value',
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Tip: Check your investment app/statement for the latest value',
-              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ElevatedButton(
+              onPressed: () async {
+                final value = double.tryParse(valueController.text);
+                if (value == null || value < 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please enter a valid positive number'),
+                    ),
+                  );
+                  return;
+                }
+                
+                // Validate that the selected date is not before the latest date
+                if (latestDate != null && selectedDate.isBefore(latestDate)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Update date cannot be before ${DateFormat('MMM dd, yyyy').format(latestDate)}',
+                      ),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                final updatedInvestment = investment.copyWith(
+                  currentValue: value,
+                  currentValueDate: selectedDate,
+                );
+
+                await provider.updateInvestment(updatedInvestment);
+
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Current value updated to ${FinancialCalculations.formatCurrency(value)}',
+                      ),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Update'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final value = double.tryParse(valueController.text);
-              if (value == null || value < 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Please enter a valid positive number'),
-                  ),
-                );
-                return;
-              }
-
-              final updatedInvestment = investment.copyWith(
-                currentValue: value,
-              );
-
-              await provider.updateInvestment(updatedInvestment);
-
-              if (context.mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Current value updated to ${FinancialCalculations.formatCurrency(value)}',
-                    ),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-            },
-            child: const Text('Update'),
-          ),
-        ],
       ),
     );
   }

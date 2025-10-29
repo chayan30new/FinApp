@@ -49,6 +49,24 @@ class InvestmentProvider with ChangeNotifier {
     }
   }
 
+  Future<void> updateInvestmentValue(String id, double currentValue, DateTime currentValueDate) async {
+    try {
+      final investment = getInvestmentById(id);
+      if (investment == null) return;
+
+      final updatedInvestment = investment.copyWith(
+        currentValue: currentValue,
+        currentValueDate: currentValueDate,
+      );
+
+      await _dbService.updateInvestment(updatedInvestment);
+      await loadInvestments();
+    } catch (e) {
+      debugPrint('Error updating investment value: $e');
+      rethrow;
+    }
+  }
+
   Future<void> deleteInvestment(String id) async {
     try {
       await _dbService.deleteInvestment(id);

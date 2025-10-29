@@ -2,15 +2,17 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/investment.dart';
 import '../models/transaction.dart' as model;
+import '../models/watchlist_item.dart';
 
 class DatabaseService {
   static Database? _database;
   static const String _dbName = 'investment_tracker.db';
-  static const int _dbVersion = 2; // Incremented for quantity field
+  static const int _dbVersion = 5; // Incremented for watchlist table
 
   // Tables
   static const String _investmentsTable = 'investments';
   static const String _transactionsTable = 'transactions';
+  static const String _watchlistTable = 'watchlist';
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -36,7 +38,9 @@ class DatabaseService {
         name TEXT NOT NULL,
         description TEXT,
         createdAt TEXT NOT NULL,
-        currentValue REAL
+        currentValue REAL,
+        currentValueDate TEXT,
+        tickerSymbol TEXT
       )
     ''');
 
@@ -54,6 +58,18 @@ class DatabaseService {
           ON DELETE CASCADE
       )
     ''');
+
+    // Create watchlist table
+    await db.execute('''
+      CREATE TABLE $_watchlistTable (
+        id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        name TEXT NOT NULL,
+        targetPrice REAL,
+        notes TEXT,
+        addedAt TEXT NOT NULL
+      )
+    ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -61,6 +77,31 @@ class DatabaseService {
       // Add quantity column to transactions table
       await db.execute('''
         ALTER TABLE $_transactionsTable ADD COLUMN quantity REAL
+      ''');
+    }
+    if (oldVersion < 3) {
+      // Add currentValueDate column to investments table
+      await db.execute('''
+        ALTER TABLE $_investmentsTable ADD COLUMN currentValueDate TEXT
+      ''');
+    }
+    if (oldVersion < 4) {
+      // Add tickerSymbol column to investments table
+      await db.execute('''
+        ALTER TABLE $_investmentsTable ADD COLUMN tickerSymbol TEXT
+      ''');
+    }
+    if (oldVersion < 5) {
+      // Create watchlist table
+      await db.execute('''
+        CREATE TABLE $_watchlistTable (
+          id TEXT PRIMARY KEY,
+          symbol TEXT NOT NULL,
+          name TEXT NOT NULL,
+          targetPrice REAL,
+          notes TEXT,
+          addedAt TEXT NOT NULL
+        )
       ''');
     }
   }
@@ -189,5 +230,46 @@ class DatabaseService {
   Future<void> close() async {
     final db = await database;
     await db.close();
+  }
+
+  // Watchlist CRUD operations
+  Future<void> insertWatchlistItem(WatchlistItem item) async {
+    final db = await database;
+    await db.insert(
+      _watchlistTable,
+      item.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<WatchlistItem>> getWatchlist() async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      _watchlistTable,
+      orderBy: 'addedAt DESC',
+    );
+
+    return List.generate(maps.length, (i) {
+      return WatchlistItem.fromMap(maps[i]);
+    });
+  }
+
+  Future<void> updateWatchlistItem(WatchlistItem item) async {
+    final db = await database;
+    await db.update(
+      _watchlistTable,
+      item.toMap(),
+      where: 'id = ?',
+      whereArgs: [item.id],
+    );
+  }
+
+  Future<void> deleteWatchlistItem(String id) async {
+    final db = await database;
+    await db.delete(
+      _watchlistTable,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 }

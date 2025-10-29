@@ -2,11 +2,13 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/investment.dart';
 import '../models/transaction.dart' as model;
+import '../models/watchlist_item.dart';
 
 /// Web-compatible database service using SharedPreferences
 class DatabaseServiceWeb {
   static const String _investmentsKey = 'investments';
   static const String _transactionsKey = 'transactions';
+  static const String _watchlistKey = 'watchlist';
 
   Future<SharedPreferences> get _prefs async {
     return await SharedPreferences.getInstance();
@@ -155,5 +157,41 @@ class DatabaseServiceWeb {
 
   Future<void> close() async {
     // No-op for SharedPreferences
+  }
+
+  // Watchlist CRUD operations
+  Future<void> insertWatchlistItem(WatchlistItem item) async {
+    final prefs = await _prefs;
+    final watchlist = await getWatchlist();
+    
+    watchlist.removeWhere((w) => w.id == item.id);
+    watchlist.add(item);
+    
+    final watchlistMaps = watchlist.map((w) => w.toMap()).toList();
+    await prefs.setString(_watchlistKey, jsonEncode(watchlistMaps));
+  }
+
+  Future<List<WatchlistItem>> getWatchlist() async {
+    final prefs = await _prefs;
+    final jsonString = prefs.getString(_watchlistKey);
+    
+    if (jsonString == null) return [];
+    
+    final List<dynamic> jsonList = jsonDecode(jsonString);
+    return jsonList.map((json) => WatchlistItem.fromMap(json as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> updateWatchlistItem(WatchlistItem item) async {
+    await insertWatchlistItem(item);
+  }
+
+  Future<void> deleteWatchlistItem(String id) async {
+    final prefs = await _prefs;
+    final watchlist = await getWatchlist();
+    
+    watchlist.removeWhere((w) => w.id == id);
+    
+    final watchlistMaps = watchlist.map((w) => w.toMap()).toList();
+    await prefs.setString(_watchlistKey, jsonEncode(watchlistMaps));
   }
 }

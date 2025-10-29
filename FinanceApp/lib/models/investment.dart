@@ -7,6 +7,8 @@ class Investment {
   final List<Transaction> transactions;
   final DateTime createdAt;
   final double? currentValue; // Manually set current market value
+  final DateTime? currentValueDate; // Date when current value was last updated
+  final String? tickerSymbol; // Stock/ETF ticker symbol (e.g., 'VAS.AX')
 
   Investment({
     required this.id,
@@ -15,6 +17,8 @@ class Investment {
     required this.transactions,
     required this.createdAt,
     this.currentValue,
+    this.currentValueDate,
+    this.tickerSymbol,
   });
 
   /// Total amount invested (all buy transactions)
@@ -83,6 +87,8 @@ class Investment {
       'description': description,
       'createdAt': createdAt.toIso8601String(),
       'currentValue': currentValue,
+      'currentValueDate': currentValueDate?.toIso8601String(),
+      'tickerSymbol': tickerSymbol,
     };
   }
 
@@ -94,6 +100,10 @@ class Investment {
       transactions: transactions,
       createdAt: DateTime.parse(map['createdAt'] as String),
       currentValue: map['currentValue'] as double?,
+      currentValueDate: map['currentValueDate'] != null 
+          ? DateTime.parse(map['currentValueDate'] as String)
+          : null,
+      tickerSymbol: map['tickerSymbol'] as String?,
     );
   }
 
@@ -104,6 +114,8 @@ class Investment {
     List<Transaction>? transactions,
     DateTime? createdAt,
     double? currentValue,
+    DateTime? currentValueDate,
+    String? tickerSymbol,
   }) {
     return Investment(
       id: id ?? this.id,
@@ -112,6 +124,8 @@ class Investment {
       transactions: transactions ?? this.transactions,
       createdAt: createdAt ?? this.createdAt,
       currentValue: currentValue ?? this.currentValue,
+      currentValueDate: currentValueDate ?? this.currentValueDate,
+      tickerSymbol: tickerSymbol ?? this.tickerSymbol,
     );
   }
 }
