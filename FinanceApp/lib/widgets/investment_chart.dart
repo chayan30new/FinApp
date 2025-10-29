@@ -50,13 +50,13 @@ class InvestmentChart extends StatelessWidget {
                     horizontalInterval: chartData.yInterval,
                     getDrawingHorizontalLine: (value) {
                       return FlLine(
-                        color: Colors.grey.withOpacity(0.2),
+                        color: Colors.grey.withAlpha(50),
                         strokeWidth: 1,
                       );
                     },
                     getDrawingVerticalLine: (value) {
                       return FlLine(
-                        color: Colors.grey.withOpacity(0.2),
+                        color: Colors.grey.withAlpha(50),
                         strokeWidth: 1,
                       );
                     },
@@ -92,7 +92,7 @@ class InvestmentChart extends StatelessWidget {
                   ),
                   borderData: FlBorderData(
                     show: true,
-                    border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                    border: Border.all(color: Colors.grey.withAlpha(75)),
                   ),
                   minX: chartData.minX,
                   maxX: chartData.maxX,
@@ -139,13 +139,13 @@ class InvestmentChart extends StatelessWidget {
                       ),
                       belowBarData: BarAreaData(
                         show: true,
-                        color: Colors.green.withOpacity(0.1),
+                        color: Colors.green.withAlpha(25),
                       ),
                     ),
                   ],
                   lineTouchData: LineTouchData(
                     touchTooltipData: LineTouchTooltipData(
-                      tooltipBgColor: Colors.blueGrey.withOpacity(0.9),
+                      tooltipBgColor: Colors.blueGrey.withAlpha(230),
                       getTooltipItems: (List<LineBarSpot> touchedSpots) {
                         return touchedSpots.map((LineBarSpot touchedSpot) {
                           final date = DateTime.fromMillisecondsSinceEpoch(

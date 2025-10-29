@@ -239,9 +239,9 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.orange.withAlpha(25),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  border: Border.all(color: Colors.orange.withAlpha(75)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

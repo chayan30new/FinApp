@@ -28,12 +28,10 @@ class StockPriceService {
         if (result == null) return null;
 
         final meta = result['meta'];
-        final quote = result['indicators']?['quote']?[0];
         
         final currentPrice = meta['regularMarketPrice']?.toDouble();
         final previousClose = meta['previousClose']?.toDouble();
         final currency = meta['currency'] ?? 'AUD';
-        final shortName = meta['symbol'] ?? formattedSymbol;
         final longName = meta['longName'] ?? meta['shortName'] ?? formattedSymbol;
 
         if (currentPrice == null) return null;

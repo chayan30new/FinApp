@@ -224,7 +224,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
         else
           ...investment.transactions.map((transaction) {
             return _buildTransactionCard(transaction);
-          }).toList(),
+          }),
         // Add bottom padding so FAB doesn't cover last transaction
         const SizedBox(height: 80),
       ],
