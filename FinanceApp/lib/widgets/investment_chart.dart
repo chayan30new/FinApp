@@ -2,8 +2,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../models/investment.dart';
 import '../models/transaction.dart';
+import '../providers/settings_provider.dart';
 import '../utils/calculations.dart';
 
 class InvestmentChart extends StatelessWidget {
@@ -13,6 +15,9 @@ class InvestmentChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
+    final currencySymbol = settings.currencySymbol;
+
     if (investment.transactions.isEmpty) {
       return const Card(
         child: Padding(
@@ -158,7 +163,7 @@ class InvestmentChart extends StatelessWidget {
                               : 'Value';
 
                           return LineTooltipItem(
-                            '$label\n$dateStr\n${FinancialCalculations.formatCurrency(value)}',
+                            '$label\n$dateStr\n${FinancialCalculations.formatCurrency(value, symbol: currencySymbol)}',
                             const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,

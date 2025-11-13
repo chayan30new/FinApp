@@ -1,12 +1,17 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../models/investment.dart';
 import '../models/transaction.dart';
 import '../providers/investment_provider.dart';
+import '../providers/settings_provider.dart';
+import '../services/stock_price_service.dart';
+import '../services/mutual_fund_nav_service.dart';
 import '../utils/calculations.dart';
 import '../widgets/investment_chart.dart';
 import '../widgets/live_price_widget.dart';
+import '../widgets/historical_price_chart.dart';
 import 'add_investment_screen.dart';
 
 class InvestmentDetailScreen extends StatefulWidget {
@@ -19,8 +24,30 @@ class InvestmentDetailScreen extends StatefulWidget {
 }
 
 class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
+  HistoricalPriceData? _historicalData;
+  bool _isLoadingHistory = false;
+  String? _historyError;
+  String _selectedPeriod = '1y';
+  Map<String, double>? _fundPerformance;
+
+  @override
+  void initState() {
+    super.initState();
+    // Fetch historical data when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = Provider.of<InvestmentProvider>(context, listen: false);
+      final investment = provider.getInvestmentById(widget.investmentId);
+      if (investment != null && investment.tickerSymbol != null) {
+        _fetchHistoricalPrices(investment.tickerSymbol!, investment);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
+    final currencySymbol = settings.currencySymbol;
+    
     return Consumer<InvestmentProvider>(
       builder: (context, provider, child) {
         final investment = provider.getInvestmentById(widget.investmentId);
@@ -55,9 +82,9 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
               ),
             ],
           ),
-          body: _buildBody(investment),
+          body: _buildBody(investment, currencySymbol),
           floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => _showAddTransactionDialog(context, provider, investment),
+            onPressed: () => _showAddTransactionDialog(context, provider, investment, currencySymbol),
             icon: const Icon(Icons.add),
             label: const Text('Add Transaction'),
           ),
@@ -66,7 +93,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
     );
   }
 
-  Widget _buildBody(Investment investment) {
+  Widget _buildBody(Investment investment, String currencySymbol) {
     final xirr = FinancialCalculations.calculateXIRR(
       investment.transactions,
       currentValue: investment.effectiveCurrentValue,
@@ -88,8 +115,9 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Live Price Widget (if ticker symbol is set)
-        if (investment.tickerSymbol != null && investment.tickerSymbol!.isNotEmpty)
+        // Live Price Widget (for stocks/ETFs) or NAV Widget (for mutual funds)
+        if (investment.tickerSymbol != null && 
+            investment.tickerSymbol!.isNotEmpty)
           LivePriceWidget(
             investment: investment,
             onPriceUpdate: (newValue) async {
@@ -100,6 +128,33 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                 DateTime.now(),
               );
             },
+          ),
+        // Info card for mutual funds (NAV is fetched from AMFI)
+        if (investment.tickerSymbol != null && 
+            investment.tickerSymbol!.isNotEmpty &&
+            !(investment.tickerSymbol!.contains('.NS') || 
+              investment.tickerSymbol!.contains('.AX') ||
+              investment.tickerSymbol!.contains('.BSE')))
+          Card(
+            color: Colors.blue[50],
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(Icons.account_balance, color: Colors.blue[700], size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Mutual Fund: NAV is fetched from AMFI India (updated daily after market close).',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue[900],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         // Performance Card
         Card(
@@ -123,6 +178,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                         context,
                         Provider.of<InvestmentProvider>(context, listen: false),
                         investment,
+                        currencySymbol,
                       ),
                       icon: const Icon(Icons.edit, size: 16),
                       label: const Text('Update Value'),
@@ -131,22 +187,22 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                 ),
                 const SizedBox(height: 16),
                 _buildMetricRow('Total Invested (Buy)',
-                    FinancialCalculations.formatCurrency(investment.totalInvested)),
+                    FinancialCalculations.formatCurrency(investment.totalInvested, symbol: currencySymbol)),
                 const SizedBox(height: 8),
                 _buildMetricRow('Total Withdrawn (Sell)',
-                    FinancialCalculations.formatCurrency(investment.totalWithdrawn)),
+                    FinancialCalculations.formatCurrency(investment.totalWithdrawn, symbol: currencySymbol)),
                 const SizedBox(height: 8),
                 _buildMetricRow('Net Invested',
-                    FinancialCalculations.formatCurrency(investment.netInvested),
+                    FinancialCalculations.formatCurrency(investment.netInvested, symbol: currencySymbol),
                     color: Colors.blue),
                 const Divider(height: 24),
                 _buildMetricRow('Current Market Value',
-                    FinancialCalculations.formatCurrency(investment.effectiveCurrentValue),
+                    FinancialCalculations.formatCurrency(investment.effectiveCurrentValue, symbol: currencySymbol),
                     color: Colors.green),
                 const SizedBox(height: 8),
                 _buildMetricRow(
                   'Profit/Loss',
-                  FinancialCalculations.formatCurrency(investment.profitLoss),
+                  FinancialCalculations.formatCurrency(investment.profitLoss, symbol: currencySymbol),
                   color: investment.profitLoss >= 0 ? Colors.green : Colors.red,
                 ),
                 const SizedBox(height: 8),
@@ -186,13 +242,13 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                   if (investment.averagePricePerUnit != null)
                     _buildMetricRow(
                       'Average Price/Unit',
-                      FinancialCalculations.formatCurrency(investment.averagePricePerUnit!),
+                      FinancialCalculations.formatCurrency(investment.averagePricePerUnit!, symbol: currencySymbol),
                     ),
                   const SizedBox(height: 8),
                   if (investment.currentPricePerUnit != null)
                     _buildMetricRow(
                       'Current Price/Unit',
-                      FinancialCalculations.formatCurrency(investment.currentPricePerUnit!),
+                      FinancialCalculations.formatCurrency(investment.currentPricePerUnit!, symbol: currencySymbol),
                       color: Colors.green,
                     ),
                 ],
@@ -204,6 +260,157 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
         // Investment Growth Chart
         InvestmentChart(investment: investment),
         const SizedBox(height: 16),
+        // Historical Price/NAV Chart
+        if (investment.tickerSymbol != null) ...[
+          Text(
+            'Historical Price Chart',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: _isLoadingHistory
+                  ? const SizedBox(
+                      height: 250,
+                      child: Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                    )
+                  : _historyError != null
+                      ? SizedBox(
+                          height: 250,
+                          child: Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(
+                                  Icons.error_outline,
+                                  color: Colors.red,
+                                  size: 48,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  _historyError!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.red),
+                                ),
+                                const SizedBox(height: 16),
+                                ElevatedButton(
+                                  onPressed: () => _fetchHistoricalPrices(investment.tickerSymbol!, investment),
+                                  child: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : _historicalData != null
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Period selector
+                                SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: Row(
+                                    children: [
+                                      for (var period in ['1mo', '3mo', '6mo', '1y', '2y', '5y'])
+                                        Padding(
+                                          padding: const EdgeInsets.only(right: 8),
+                                          child: ChoiceChip(
+                                            label: Text(period.toUpperCase()),
+                                            selected: _selectedPeriod == period,
+                                            onSelected: (selected) {
+                                              if (selected) {
+                                                setState(() {
+                                                  _selectedPeriod = period;
+                                                });
+                                                _fetchHistoricalPrices(investment.tickerSymbol!, investment);
+                                              }
+                                            },
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                HistoricalPriceChart(data: _historicalData!),
+                              ],
+                            )
+                          : const SizedBox(
+                              height: 250,
+                              child: Center(
+                                child: Text('No historical data available'),
+                              ),
+                            ),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+        // Fund Performance Metrics
+        if (_fundPerformance != null && _fundPerformance!.isNotEmpty) ...[
+          Text(
+            'Fund Performance',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Returns',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  ..._fundPerformance!.entries.map((entry) {
+                    final isPositive = entry.value >= 0;
+                    final color = isPositive ? Colors.green : Colors.red;
+                    final icon = isPositive ? Icons.arrow_upward : Icons.arrow_downward;
+                    
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            entry.key,
+                            style: TextStyle(
+                              color: Colors.grey[700],
+                              fontSize: 14,
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              Icon(icon, size: 16, color: color),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${isPositive ? '+' : ''}${entry.value.toStringAsFixed(2)}%',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: color,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         // Transactions
         Text(
           'Transactions',
@@ -223,7 +430,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
           )
         else
           ...investment.transactions.map((transaction) {
-            return _buildTransactionCard(transaction);
+            return _buildTransactionCard(transaction, currencySymbol);
           }),
         // Add bottom padding so FAB doesn't cover last transaction
         const SizedBox(height: 80),
@@ -254,7 +461,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
     );
   }
 
-  Widget _buildTransactionCard(Transaction transaction) {
+  Widget _buildTransactionCard(Transaction transaction, String currencySymbol) {
     final dateFormat = DateFormat('dd MMM yyyy');
     final isBuy = transaction.type == 'buy';
 
@@ -278,7 +485,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
             Text(dateFormat.format(transaction.date)),
             if (transaction.quantity != null)
               Text(
-                'Qty: ${transaction.quantity!.toStringAsFixed(2)} @ ${FinancialCalculations.formatCurrency(transaction.pricePerUnit!)} per unit',
+                'Qty: ${transaction.quantity!.toStringAsFixed(2)} @ ${FinancialCalculations.formatCurrency(transaction.pricePerUnit!, symbol: currencySymbol)} per unit',
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
             if (transaction.notes != null) 
@@ -292,7 +499,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              FinancialCalculations.formatCurrency(transaction.amount.abs()),
+              FinancialCalculations.formatCurrency(transaction.amount.abs(), symbol: currencySymbol),
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 color: isBuy ? Colors.red : Colors.green,
@@ -329,20 +536,133 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
     BuildContext context,
     InvestmentProvider provider,
     Investment investment,
+    String currencySymbol,
   ) {
     final amountController = TextEditingController();
     final quantityController = TextEditingController();
     final notesController = TextEditingController();
-    final currentValueController = TextEditingController(); // Don't pre-fill - let user decide
+    final currentValueController = TextEditingController();
     DateTime selectedDate = DateTime.now();
     String transactionType = 'buy';
+    bool isLoadingSuggestion = false;
+
+    // Function to fetch and suggest current value based on transaction date
+    Future<void> fetchAndSuggestValue(StateSetter dialogSetState, DateTime transactionDate) async {
+      if (investment.tickerSymbol == null || investment.tickerSymbol!.isEmpty) {
+        return; // Can't fetch without ticker symbol
+      }
+
+      if (investment.totalQuantity <= 0) {
+        return; // Need quantity to calculate value
+      }
+
+      // Check if this is a mutual fund
+      final isMutualFund = !(investment.tickerSymbol!.contains('.NS') || 
+                              investment.tickerSymbol!.contains('.AX') ||
+                              investment.tickerSymbol!.contains('.BSE'));
+
+      dialogSetState(() {
+        isLoadingSuggestion = true;
+      });
+
+      try {
+        final now = DateTime.now();
+        final daysDifference = now.difference(transactionDate).inDays;
+        
+        double? priceOnDate;
+        
+        if (isMutualFund) {
+          // Fetch NAV for mutual fund
+          if (daysDifference <= 0) {
+            // Today or future - use latest NAV
+            final navData = await MutualFundNavService.fetchLatestNavBySymbol(investment.tickerSymbol!);
+            priceOnDate = navData?.nav;
+          } else {
+            // Historical date - fetch NAV for that date
+            final navData = await MutualFundNavService.fetchNavForDateBySymbol(
+              investment.tickerSymbol!,
+              transactionDate,
+            );
+            priceOnDate = navData?.nav;
+          }
+        } else if (daysDifference <= 0) {
+          // Transaction is today or future - use current price
+          final priceData = await StockPriceService.fetchPrice(investment.tickerSymbol!);
+          priceOnDate = priceData?.currentPrice;
+        } else {
+          // Transaction is in the past - fetch historical price
+          // Determine appropriate period based on how far back
+          String period;
+          if (daysDifference <= 30) {
+            period = '1mo';
+          } else if (daysDifference <= 90) {
+            period = '3mo';
+          } else if (daysDifference <= 180) {
+            period = '6mo';
+          } else if (daysDifference <= 365) {
+            period = '1y';
+          } else if (daysDifference <= 730) {
+            period = '2y';
+          } else if (daysDifference <= 1825) {
+            period = '5y';
+          } else {
+            period = 'max';
+          }
+          
+          final historicalData = await StockPriceService.fetchHistoricalPrices(
+            investment.tickerSymbol!,
+            period: period,
+          );
+          
+          if (historicalData != null && historicalData.prices.isNotEmpty) {
+            // Find the closest date to transaction date
+            HistoricalPrice? closestPrice;
+            int minDaysDiff = 999999;
+            
+            for (var price in historicalData.prices) {
+              final diff = (price.date.difference(transactionDate).inDays).abs();
+              if (diff < minDaysDiff) {
+                minDaysDiff = diff;
+                closestPrice = price;
+              }
+            }
+            
+            priceOnDate = closestPrice?.close;
+          }
+        }
+        
+        if (priceOnDate != null && investment.totalQuantity > 0) {
+          // Calculate suggested value: price on transaction date * total quantity
+          final suggestedValue = priceOnDate * investment.totalQuantity;
+          currentValueController.text = suggestedValue.toStringAsFixed(2);
+        }
+      } catch (e) {
+        // Silently fail - user can still enter manually
+        debugPrint('Failed to fetch price suggestion: $e');
+      } finally {
+        dialogSetState(() {
+          isLoadingSuggestion = false;
+        });
+      }
+    }
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Add Transaction'),
-          content: SingleChildScrollView(
+        builder: (context, setState) {
+          // Auto-fetch suggestion when dialog opens (only once)
+          if (currentValueController.text.isEmpty && 
+              investment.tickerSymbol != null && 
+              investment.tickerSymbol!.isNotEmpty &&
+              !isLoadingSuggestion) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              fetchAndSuggestValue(setState, selectedDate);
+            });
+          }
+          
+          return AlertDialog(
+            title: const Text('Add Transaction'),
+            content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -399,6 +719,10 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                       setState(() {
                         selectedDate = picked;
                       });
+                      // Re-fetch suggestion with new date if ticker is available
+                      if (investment.tickerSymbol != null && investment.tickerSymbol!.isNotEmpty) {
+                        fetchAndSuggestValue(setState, picked);
+                      }
                     }
                   },
                 ),
@@ -430,20 +754,61 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  'Enter total portfolio value. Optional if you entered quantity above.',
-                  style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        investment.tickerSymbol != null && 
+                        investment.tickerSymbol!.isNotEmpty &&
+                        (investment.tickerSymbol!.contains('.NS') || 
+                         investment.tickerSymbol!.contains('.AX') ||
+                         investment.tickerSymbol!.contains('.BSE'))
+                            ? 'Auto-suggested based on price on ${DateFormat('dd MMM yyyy').format(selectedDate)}. You can edit if needed.'
+                            : investment.tickerSymbol != null && investment.tickerSymbol!.isNotEmpty
+                            ? 'Auto-suggested based on NAV from AMFI on ${DateFormat('dd MMM yyyy').format(selectedDate)}. You can edit if needed.'
+                            : 'Enter total portfolio value. Optional if you entered quantity above.',
+                        style: TextStyle(
+                          color: Colors.grey[700],
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    if (investment.tickerSymbol != null && 
+                        investment.tickerSymbol!.isNotEmpty)
+                      IconButton(
+                        icon: isLoadingSuggestion 
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh, size: 20),
+                        tooltip: 'Refresh suggested value',
+                        onPressed: isLoadingSuggestion ? null : () => fetchAndSuggestValue(setState, selectedDate),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: currentValueController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Current Total Market Value (Optional)',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.trending_up),
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.trending_up),
                     hintText: 'Total value of investment today',
+                    suffixIcon: isLoadingSuggestion
+                        ? const Padding(
+                            padding: EdgeInsets.all(12.0),
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : null,
                   ),
                   keyboardType: TextInputType.number,
+                  enabled: !isLoadingSuggestion,
                 ),
               ],
             ),
@@ -564,7 +929,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(
-                        'Transaction added and value updated to ${FinancialCalculations.formatCurrency(finalCurrentValue)}',
+                        'Transaction added and value updated to ${FinancialCalculations.formatCurrency(finalCurrentValue, symbol: currencySymbol)}',
                       ),
                       backgroundColor: Colors.green,
                     ),
@@ -574,7 +939,8 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
               child: const Text('Add'),
             ),
           ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -809,6 +1175,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
     BuildContext context,
     InvestmentProvider provider,
     Investment investment,
+    String currencySymbol,
   ) {
     final valueController = TextEditingController(
       text: investment.currentValue?.toString() ?? '',
@@ -845,7 +1212,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Net Invested: ${FinancialCalculations.formatCurrency(investment.netInvested)}',
+                'Net Invested: ${FinancialCalculations.formatCurrency(investment.netInvested, symbol: currencySymbol)}',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               if (latestDate != null) ...[
@@ -944,7 +1311,7 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(
-                        'Current value updated to ${FinancialCalculations.formatCurrency(value)}',
+                        'Current value updated to ${FinancialCalculations.formatCurrency(value, symbol: currencySymbol)}',
                       ),
                       backgroundColor: Colors.green,
                     ),
@@ -957,5 +1324,215 @@ class _InvestmentDetailScreenState extends State<InvestmentDetailScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _fetchHistoricalPrices(String symbol, Investment investment) async {
+    setState(() {
+      _isLoadingHistory = true;
+      _historyError = null;
+    });
+
+    try {
+      // Check if it's a mutual fund (no .NS, .AX, .BSE suffix)
+      final isMutualFund = !symbol.contains('.NS') && 
+                          !symbol.contains('.AX') && 
+                          !symbol.contains('.BSE');
+
+      if (isMutualFund) {
+        print('Fetching historical NAV for mutual fund: $symbol');
+        
+        final days = _getPeriodDays(_selectedPeriod);
+        final navList = await MutualFundNavService.fetchHistoricalNavBySymbol(symbol, limitDays: days);
+
+        if (navList.isNotEmpty) {
+          print('Retrieved ${navList.length} NAV records');
+          
+          // Convert MutualFundNav to HistoricalPrice
+          final historicalPrices = navList.map((nav) {
+            return HistoricalPrice(
+              date: nav.date,
+              close: nav.nav,
+            );
+          }).toList();
+
+          // Sort by date ascending
+          historicalPrices.sort((a, b) => a.date.compareTo(b.date));
+
+          // Calculate fund performance metrics (both NAV-based CAGR and transaction-based XIRR)
+          final performance = _calculateFundPerformance(historicalPrices, investment);
+
+          setState(() {
+            _historicalData = HistoricalPriceData(
+              prices: historicalPrices,
+              symbol: symbol,
+              period: _selectedPeriod,
+            );
+            _fundPerformance = performance;
+            _isLoadingHistory = false;
+          });
+        } else {
+          setState(() {
+            _historyError = 'No historical NAV data available';
+            _isLoadingHistory = false;
+          });
+        }
+      } else {
+        // For stocks, use Yahoo Finance
+        print('Fetching historical prices for stock: $symbol');
+        
+        final data = await StockPriceService.fetchHistoricalPrices(symbol, period: _selectedPeriod);
+
+        if (data != null) {
+          setState(() {
+            _historicalData = data;
+            _fundPerformance = _calculateFundPerformance(data.prices, investment);
+            _isLoadingHistory = false;
+          });
+        } else {
+          setState(() {
+            _historyError = 'Unable to fetch historical data';
+            _isLoadingHistory = false;
+          });
+        }
+      }
+    } catch (e) {
+      print('Error fetching historical prices: $e');
+      setState(() {
+        _historyError = 'Error: ${e.toString()}';
+        _isLoadingHistory = false;
+      });
+    }
+  }
+
+  int _getPeriodDays(String period) {
+    switch (period) {
+      case '1mo':
+        return 30;
+      case '3mo':
+        return 90;
+      case '6mo':
+        return 180;
+      case '1y':
+        return 365;
+      case '2y':
+        return 730;
+      case '5y':
+        return 1825;
+      default:
+        return 365;
+    }
+  }
+
+  Map<String, double> _calculateFundPerformance(List<HistoricalPrice> prices, Investment investment) {
+    if (prices.isEmpty) return {};
+
+    final performance = <String, double>{};
+    final latestPrice = prices.last.close;
+    final latestDate = prices.last.date;
+
+    // Calculate XIRR based on actual transactions (investor's actual return)
+    if (investment.transactions.isNotEmpty) {
+      final xirr = FinancialCalculations.calculateXIRR(
+        investment.transactions,
+        currentValue: investment.effectiveCurrentValue,
+      );
+      if (xirr != null) {
+        performance['XIRR (Your Return)'] = xirr;
+      }
+    }
+
+    // Calculate returns for different periods
+    // For periods >= 1 year, use annualized returns (CAGR)
+    // For periods < 1 year, use absolute returns
+    final periods = {
+      '1 Month': 30,
+      '3 Months': 90,
+      '6 Months': 180,
+      '1 Year': 365,
+      '2 Years': 730,
+      '3 Years': 1095,
+      '5 Years': 1825,
+    };
+    
+    for (var entry in periods.entries) {
+      final periodName = entry.key;
+      final daysAgo = entry.value;
+      final targetDate = latestDate.subtract(Duration(days: daysAgo));
+
+      // Find the closest price to target date
+      HistoricalPrice? closestPrice;
+      Duration? minDifference;
+
+      for (var price in prices) {
+        final difference = price.date.difference(targetDate).abs();
+        if (minDifference == null || difference < minDifference) {
+          minDifference = difference;
+          closestPrice = price;
+        }
+      }
+
+      if (closestPrice != null && closestPrice.close > 0) {
+        // Calculate actual days between the dates
+        final actualDays = latestDate.difference(closestPrice.date).inDays;
+        
+        if (actualDays < 30) {
+          // Not enough data for this period
+          continue;
+        }
+        
+        // For periods >= 1 year, calculate annualized return (CAGR)
+        // For periods < 1 year, calculate absolute return
+        if (daysAgo >= 365) {
+          final years = actualDays / 365.0;
+          final cagr = (pow(latestPrice / closestPrice.close, 1 / years) - 1) * 100;
+          performance[periodName] = cagr.toDouble();
+        } else {
+          // Simple return for periods less than 1 year
+          final returnPercent = ((latestPrice - closestPrice.close) / closestPrice.close) * 100;
+          performance[periodName] = returnPercent;
+        }
+      }
+    }
+
+    // Calculate YoY (Year-over-Year) return
+    if (performance.containsKey('1 Year')) {
+      performance['YoY Return'] = performance['1 Year']!;
+    }
+
+    // Calculate CAGR since the earliest available data (NAV-based, assumes lump-sum investment)
+    if (prices.length > 1) {
+      final firstPrice = prices.first.close;
+      final firstDate = prices.first.date;
+      final daysDiff = latestDate.difference(firstDate).inDays;
+      
+      if (daysDiff >= 365 && firstPrice > 0) {
+        final years = daysDiff / 365.0;
+        final cagr = (pow(latestPrice / firstPrice, 1 / years) - 1) * 100;
+        performance['CAGR (NAV Growth)'] = cagr.toDouble();
+      } else if (daysDiff > 0 && firstPrice > 0) {
+        // If less than a year, show absolute return
+        final absoluteReturn = ((latestPrice - firstPrice) / firstPrice) * 100;
+        performance['Total Return (NAV)'] = absoluteReturn;
+      }
+    }
+
+    // Calculate volatility (standard deviation of daily returns)
+    if (prices.length > 1) {
+      final returns = <double>[];
+      for (int i = 1; i < prices.length; i++) {
+        final dailyReturn = (prices[i].close - prices[i - 1].close) / prices[i - 1].close;
+        returns.add(dailyReturn);
+      }
+
+      if (returns.isNotEmpty) {
+        final mean = returns.reduce((a, b) => a + b) / returns.length;
+        final variance = returns.map((r) => pow(r - mean, 2)).reduce((a, b) => a + b) / returns.length;
+        final stdDev = sqrt(variance);
+        final annualizedVolatility = stdDev * sqrt(252) * 100; // Annualized volatility in percentage
+        performance['Volatility (Annual)'] = annualizedVolatility;
+      }
+    }
+
+    return performance;
   }
 }

@@ -3,9 +3,11 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../models/watchlist_item.dart';
 import '../providers/watchlist_provider.dart';
+import '../providers/settings_provider.dart';
 import '../utils/calculations.dart';
-import '../utils/stock_symbols.dart';
+import '../utils/stock_symbols_provider.dart';
 import '../services/stock_price_service.dart';
+import '../services/mutual_fund_nav_service.dart';
 import 'watchlist_detail_screen.dart';
 
 class WatchlistScreen extends StatelessWidget {
@@ -13,9 +15,11 @@ class WatchlistScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
+    
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Watchlist'),
+        title: Text('Watchlist - ${settings.marketName}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Consumer<WatchlistProvider>(
@@ -101,6 +105,9 @@ class WatchlistScreen extends StatelessWidget {
       }
     });
 
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    final isIndianMarket = settings.selectedMarket == Market.india;
+    
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -122,11 +129,15 @@ class WatchlistScreen extends StatelessWidget {
             children: [
               TextField(
                 controller: symbolController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Ticker Symbol *',
-                  hintText: 'e.g., VAS.AX, CBA.AX',
-                  helperText: 'Name will auto-fill with symbol. Click 🔍 to search',
-                  border: OutlineInputBorder(),
+                  hintText: isIndianMarket 
+                      ? 'e.g., RELIANCE.NS, HDFC-TOP100'
+                      : 'e.g., VAS.AX, CBA.AX',
+                  helperText: isIndianMarket
+                      ? 'Click 🔍 to search stocks/MFs. Note: Mutual funds need manual NAV entry'
+                      : 'Name will auto-fill with symbol. Click 🔍 to search',
+                  border: const OutlineInputBorder(),
                 ),
                 textCapitalization: TextCapitalization.characters,
               ),
@@ -270,7 +281,9 @@ class WatchlistScreen extends StatelessWidget {
     TextEditingController symbolController,
     TextEditingController nameController,
   ) {
-    final allSymbols = AustralianStockSymbols.getAllSymbols();
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    final isIndianMarket = settings.selectedMarket == Market.india;
+    final allSymbols = StockSymbolsProvider.getAllSymbols(isIndianMarket);
     final searchController = TextEditingController();
     List<MapEntry<String, String>> filteredSymbols = allSymbols.entries.toList();
 
@@ -278,7 +291,9 @@ class WatchlistScreen extends StatelessWidget {
       context: context,
       builder: (searchContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Search Stocks/ETFs'),
+          title: Text(isIndianMarket 
+              ? 'Search ${settings.marketName} Stocks/ETFs/MFs'
+              : 'Search ${settings.marketName} Stocks/ETFs'),
           content: SizedBox(
             width: double.maxFinite,
             child: Column(
@@ -297,7 +312,7 @@ class WatchlistScreen extends StatelessWidget {
                       if (query.isEmpty) {
                         filteredSymbols = allSymbols.entries.toList();
                       } else {
-                        filteredSymbols = AustralianStockSymbols.search(query);
+                        filteredSymbols = StockSymbolsProvider.search(query, isIndianMarket).entries.toList();
                       }
                     });
                   },
@@ -372,23 +387,56 @@ class _WatchlistItemCardState extends State<WatchlistItemCard> {
   }
 
   Future<void> _fetchPrice() async {
+    // Check if this is a mutual fund (no .NS, .AX, or .BSE suffix)
+    final isMutualFund = !(widget.item.symbol.contains('.NS') || 
+                            widget.item.symbol.contains('.AX') ||
+                            widget.item.symbol.contains('.BSE'));
+    
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
     try {
-      final priceData = await StockPriceService.fetchPrice(widget.item.symbol);
-      if (mounted) {
-        setState(() {
-          _priceData = priceData;
-          _isLoading = false;
-        });
+      if (isMutualFund) {
+        // Fetch NAV for mutual funds from MFApi.in
+        final navData = await MutualFundNavService.fetchLatestNavBySymbol(widget.item.symbol);
+        
+        if (navData != null && mounted) {
+          setState(() {
+            _priceData = StockPrice(
+              symbol: widget.item.symbol,
+              name: widget.item.name,
+              currentPrice: navData.nav,
+              previousClose: null, // NAV doesn't have previous close
+              changePercent: null, // NAV doesn't have intraday change
+              currency: '₹',
+              lastUpdated: navData.date,
+            );
+            _isLoading = false;
+          });
+        } else if (mounted) {
+          setState(() {
+            _error = 'Could not fetch NAV. Click to enter manually or check scheme code.';
+            _isLoading = false;
+          });
+        }
+      } else {
+        // Fetch live price for stocks/ETFs
+        final priceData = await StockPriceService.fetchPrice(widget.item.symbol);
+        if (mounted) {
+          setState(() {
+            _priceData = priceData;
+            _isLoading = false;
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = isMutualFund 
+              ? 'Could not fetch NAV. Click to enter manually.'
+              : e.toString();
           _isLoading = false;
         });
       }
@@ -397,63 +445,100 @@ class _WatchlistItemCardState extends State<WatchlistItemCard> {
 
   void _showManualPriceDialog() {
     final priceController = TextEditingController();
+    final isMutualFund = !(widget.item.symbol.contains('.NS') || 
+                            widget.item.symbol.contains('.AX') ||
+                            widget.item.symbol.contains('.BSE'));
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    final currencySymbol = settings.currencySymbol;
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Enter Price for ${widget.item.symbol}'),
+        title: Text(isMutualFund ? 'Enter NAV for ${widget.item.symbol}' : 'Enter Price for ${widget.item.symbol}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Due to browser CORS restrictions, we cannot fetch prices automatically in the web app.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+            Text(
+              isMutualFund 
+                  ? 'Mutual funds don\'t have live price data. Please enter the current NAV (Net Asset Value) from your fund house or AMFI website.'
+                  : 'Due to browser CORS restrictions, we cannot fetch prices automatically in the web app.',
+              style: TextStyle(fontSize: 12, color: isMutualFund ? Colors.orange[700] : Colors.grey),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: priceController,
-              decoration: const InputDecoration(
-                labelText: 'Current Price (AUD)',
-                prefixText: '\$',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: isMutualFund ? 'Current NAV' : 'Current Price',
+                prefixText: '$currencySymbol ',
+                border: const OutlineInputBorder(),
               ),
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               autofocus: true,
             ),
             const SizedBox(height: 12),
-            const Text(
-              'Check current price:',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            Text(
+              isMutualFund ? 'Check current NAV:' : 'Check current price:',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 4),
-            InkWell(
-              onTap: () {
-                // Open ASX website
-              },
-              child: Text(
-                'ASX Website: asx.com.au',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.blue[700],
-                  decoration: TextDecoration.underline,
+            if (isMutualFund) ...[
+              InkWell(
+                onTap: () {
+                  // Open AMFI website
+                },
+                child: Text(
+                  'AMFI India: amfiindia.com',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.blue[700],
+                    decoration: TextDecoration.underline,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 2),
-            InkWell(
-              onTap: () {
-                // Open Google Finance
-              },
-              child: Text(
-                'Google Finance: google.com/finance',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.blue[700],
-                  decoration: TextDecoration.underline,
+              const SizedBox(height: 2),
+              InkWell(
+                onTap: () {
+                  // Open Value Research
+                },
+                child: Text(
+                  'Value Research: valueresearchonline.com',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.blue[700],
+                    decoration: TextDecoration.underline,
+                  ),
                 ),
               ),
-            ),
+            ] else ...[
+              InkWell(
+                onTap: () {
+                  // Open ASX/NSE website
+                },
+                child: Text(
+                  settings.selectedMarket == Market.india ? 'NSE Website: nseindia.com' : 'ASX Website: asx.com.au',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.blue[700],
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 2),
+              InkWell(
+                onTap: () {
+                  // Open Google Finance
+                },
+                child: Text(
+                  'Google Finance: google.com/finance',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.blue[700],
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
         actions: [
@@ -489,6 +574,9 @@ class _WatchlistItemCardState extends State<WatchlistItemCard> {
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
+    final currencySymbol = settings.currencySymbol;
+    
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
@@ -667,7 +755,7 @@ class _WatchlistItemCardState extends State<WatchlistItemCard> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            FinancialCalculations.formatCurrency(_priceData!.currentPrice),
+                            FinancialCalculations.formatCurrency(_priceData!.currentPrice, symbol: currencySymbol),
                             style: const TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
@@ -724,7 +812,7 @@ class _WatchlistItemCardState extends State<WatchlistItemCard> {
                             Icon(Icons.flag, size: 14, color: Colors.orange[700]),
                             const SizedBox(width: 4),
                             Text(
-                              'Target: ${FinancialCalculations.formatCurrency(widget.item.targetPrice!)}',
+                              'Target: ${FinancialCalculations.formatCurrency(widget.item.targetPrice!, symbol: currencySymbol)}',
                               style: TextStyle(
                                 color: Colors.orange[700],
                                 fontSize: 12,

@@ -52,7 +52,22 @@ class FinancialCalculations {
       double npv = _calculateNPV(cashFlows, guess);
       double derivative = _calculateDerivative(cashFlows, guess);
       
-      if (derivative.abs() < 0.000001) break;
+      // Check if we've converged to a solution (NPV is close to zero)
+      if (npv.abs() < tolerance) {
+        return guess;
+      }
+      
+      // If derivative is too small, try a different guess
+      if (derivative.abs() < 0.000001) {
+        // If this is the first iteration and NPV is far from zero,
+        // the initial guess is bad - try starting from 0
+        if (i == 0 && npv.abs() > 1) {
+          guess = 0.0;
+          continue;
+        }
+        // Otherwise, we can't compute a better guess
+        break;
+      }
       
       double newGuess = guess - npv / derivative;
       
@@ -67,7 +82,14 @@ class FinancialCalculations {
       if (guess > 10) guess = 10;
     }
     
-    return guess;
+    // Final check: if NPV is close to zero, return the guess
+    // Otherwise return null as we didn't converge
+    double finalNpv = _calculateNPV(cashFlows, guess);
+    if (finalNpv.abs() < 1.0) {  // Within ₹1 is good enough
+      return guess;
+    }
+    
+    return null;  // Failed to converge
   }
   
   /// Calculate Net Present Value
@@ -150,7 +172,30 @@ class FinancialCalculations {
   
   /// Format currency for display
   static String formatCurrency(double value, {String symbol = '\$'}) {
+    // Format with Indian numbering system (lakhs, crores) if rupee symbol
+    if (symbol == '₹') {
+      return formatIndianCurrency(value);
+    }
     return '$symbol${value.toStringAsFixed(2)}';
+  }
+  
+  /// Format currency in Indian numbering system
+  static String formatIndianCurrency(double value) {
+    final isNegative = value < 0;
+    final absValue = value.abs();
+    
+    String formatted;
+    if (absValue >= 10000000) {
+      // Crores
+      formatted = '₹${(absValue / 10000000).toStringAsFixed(2)} Cr';
+    } else if (absValue >= 100000) {
+      // Lakhs
+      formatted = '₹${(absValue / 100000).toStringAsFixed(2)} L';
+    } else {
+      formatted = '₹${absValue.toStringAsFixed(2)}';
+    }
+    
+    return isNegative ? '-$formatted' : formatted;
   }
 }
 

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/investment.dart';
+import '../providers/settings_provider.dart';
 import '../services/stock_price_service.dart';
+import '../services/mutual_fund_nav_service.dart';
 import '../utils/calculations.dart';
 
 class LivePriceWidget extends StatefulWidget {
@@ -44,23 +47,68 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
       _error = null;
     });
 
-    try {
-      final price =
-          await StockPriceService.fetchPrice(widget.investment.tickerSymbol!);
+    // Check if this is a mutual fund
+    final isMutualFund = !(widget.investment.tickerSymbol!.contains('.NS') || 
+                            widget.investment.tickerSymbol!.contains('.AX') ||
+                            widget.investment.tickerSymbol!.contains('.BSE'));
 
-      if (mounted) {
-        setState(() {
-          _stockPrice = price;
-          _isLoading = false;
-          if (price == null) {
-            _error = 'Could not fetch live price. You can enter the price manually below.';
+    try {
+      if (isMutualFund) {
+        // Fetch NAV for mutual fund
+        print('Fetching NAV for: ${widget.investment.tickerSymbol}');
+        final navData = await MutualFundNavService.fetchLatestNavBySymbol(
+          widget.investment.tickerSymbol!
+        );
+        
+        print('NAV Data received: ${navData?.nav} on ${navData?.date}');
+        
+        if (mounted) {
+          if (navData != null) {
+            setState(() {
+              _stockPrice = StockPrice(
+                symbol: widget.investment.tickerSymbol!,
+                name: widget.investment.name,
+                currentPrice: navData.nav,
+                previousClose: null,
+                changePercent: null,
+                currency: '₹',
+                lastUpdated: navData.date,
+              );
+              _isLoading = false;
+            });
+            print('NAV set successfully: ₹${navData.nav}');
+          } else {
+            print('NAV Data is null for symbol: ${widget.investment.tickerSymbol}');
+            setState(() {
+              _error = 'Could not fetch NAV for ${widget.investment.tickerSymbol}. This might mean:\n'
+                      '• The scheme code mapping is missing\n'
+                      '• The fund is not in AMFI database\n'
+                      'You can enter the NAV manually below.';
+              _isLoading = false;
+            });
           }
-        });
+        }
+      } else {
+        // Fetch live price for stocks/ETFs
+        final price =
+            await StockPriceService.fetchPrice(widget.investment.tickerSymbol!);
+
+        if (mounted) {
+          setState(() {
+            _stockPrice = price;
+            _isLoading = false;
+            if (price == null) {
+              _error = 'Could not fetch live price. You can enter the price manually below.';
+            }
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Unable to fetch live price (CORS restriction in browser).\nEnter price manually below.';
+          _error = isMutualFund
+              ? 'Unable to fetch NAV. Enter NAV manually below.'
+              : 'Unable to fetch live price (CORS restriction in browser).\nEnter price manually below.';
           _isLoading = false;
         });
       }
@@ -90,12 +138,15 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
     final newValue = priceToUse * widget.investment.totalQuantity;
     widget.onPriceUpdate(newValue);
 
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    final currencySymbol = settings.currencySymbol;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Updated to ${FinancialCalculations.formatCurrency(newValue)} '
+          'Updated to ${FinancialCalculations.formatCurrency(newValue, symbol: currencySymbol)} '
           '(${widget.investment.totalQuantity.toStringAsFixed(2)} × '
-          '${FinancialCalculations.formatCurrency(priceToUse)})',
+          '${FinancialCalculations.formatCurrency(priceToUse, symbol: currencySymbol)})',
         ),
         backgroundColor: Colors.green,
       ),
@@ -189,7 +240,16 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
       return const SizedBox.shrink();
     }
 
-    return Card(
+    return Consumer<SettingsProvider>(
+      builder: (context, settings, child) {
+        final currencySymbol = settings.currencySymbol;
+
+        // Check if this is a mutual fund
+        final isMutualFund = !(widget.investment.tickerSymbol!.contains('.NS') || 
+                                widget.investment.tickerSymbol!.contains('.AX') ||
+                                widget.investment.tickerSymbol!.contains('.BSE'));
+
+        return Card(
       elevation: 2,
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -205,7 +265,7 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Live Market Price',
+                        isMutualFund ? 'Current NAV (Net Asset Value)' : 'Live Market Price',
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.bold,
                             ),
@@ -230,7 +290,7 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
                         )
                       : const Icon(Icons.refresh),
                   onPressed: _isLoading ? null : _fetchPrice,
-                  tooltip: 'Refresh price',
+                  tooltip: isMutualFund ? 'Refresh NAV' : 'Refresh price',
                 ),
               ],
             ),
@@ -284,7 +344,7 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
                     children: [
                       Text(
                         FinancialCalculations.formatCurrency(
-                            _stockPrice!.currentPrice),
+                            _stockPrice!.currentPrice, symbol: currencySymbol),
                         style: const TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
@@ -319,6 +379,7 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
                           FinancialCalculations.formatCurrency(
                             _stockPrice!.currentPrice *
                                 widget.investment.totalQuantity,
+                            symbol: currencySymbol,
                           ),
                           style: const TextStyle(
                             fontSize: 18,
@@ -370,6 +431,8 @@ class _LivePriceWidgetState extends State<LivePriceWidget> {
           ],
         ),
       ),
+        );
+      },
     );
   }
 }

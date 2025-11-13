@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../models/watchlist_item.dart';
 import '../services/stock_price_service.dart';
+import '../services/mutual_fund_nav_service.dart';
 import '../utils/calculations.dart';
 import '../widgets/historical_price_chart.dart';
+import '../providers/settings_provider.dart';
 
 class WatchlistDetailScreen extends StatefulWidget {
   final WatchlistItem item;
@@ -40,13 +43,46 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
       _error = null;
     });
 
+    // Check if this is a mutual fund
+    final isMutualFund = !(widget.item.symbol.contains('.NS') || 
+                            widget.item.symbol.contains('.AX') ||
+                            widget.item.symbol.contains('.BSE'));
+
     try {
-      final priceData = await StockPriceService.fetchPrice(widget.item.symbol);
-      if (mounted) {
-        setState(() {
-          _priceData = priceData;
-          _isLoading = false;
-        });
+      if (isMutualFund) {
+        // Fetch NAV for mutual fund
+        final navData = await MutualFundNavService.fetchLatestNavBySymbol(widget.item.symbol);
+        
+        if (mounted) {
+          if (navData != null) {
+            setState(() {
+              _priceData = StockPrice(
+                symbol: widget.item.symbol,
+                name: widget.item.name,
+                currentPrice: navData.nav,
+                previousClose: null,
+                changePercent: null,
+                currency: '₹',
+                lastUpdated: navData.date,
+              );
+              _isLoading = false;
+            });
+          } else {
+            setState(() {
+              _error = 'Could not fetch NAV';
+              _isLoading = false;
+            });
+          }
+        }
+      } else {
+        // Fetch price for stocks/ETFs
+        final priceData = await StockPriceService.fetchPrice(widget.item.symbol);
+        if (mounted) {
+          setState(() {
+            _priceData = priceData;
+            _isLoading = false;
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -64,16 +100,70 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
       _historyError = null;
     });
 
+    // Check if this is a mutual fund
+    final isMutualFund = !(widget.item.symbol.contains('.NS') || 
+                            widget.item.symbol.contains('.AX') ||
+                            widget.item.symbol.contains('.BSE'));
+
     try {
-      final histData = await StockPriceService.fetchHistoricalPrices(
-        widget.item.symbol,
-        period: _selectedPeriod,
-      );
-      if (mounted) {
-        setState(() {
-          _historicalData = histData;
-          _isLoadingHistory = false;
-        });
+      if (isMutualFund) {
+        // Fetch historical NAV for mutual fund
+        print('===> WATCHLIST: Fetching historical NAV for ${widget.item.symbol}');
+        final periodDays = _getPeriodDays(_selectedPeriod);
+        print('===> WATCHLIST: Period = $_selectedPeriod, Days = $periodDays');
+        
+        final navList = await MutualFundNavService.fetchHistoricalNavBySymbol(
+          widget.item.symbol,
+          limitDays: periodDays,
+        );
+        
+        print('===> WATCHLIST: Received ${navList.length} NAV records');
+        
+        if (mounted) {
+          if (navList.isNotEmpty) {
+            // Convert NAV data to HistoricalPriceData format
+            final prices = navList.map((nav) => HistoricalPrice(
+              date: nav.date,
+              close: nav.nav,
+            )).toList();
+            
+            print('===> WATCHLIST: Converted to ${prices.length} HistoricalPrice objects');
+            print('===> WATCHLIST: Setting state with historical data');
+            
+            setState(() {
+              _historicalData = HistoricalPriceData(
+                symbol: widget.item.symbol,
+                prices: prices,
+                period: _selectedPeriod,
+              );
+              _isLoadingHistory = false;
+            });
+            
+            print('===> WATCHLIST: State updated successfully');
+          } else {
+            print('===> WATCHLIST: ERROR - No NAV data received');
+            setState(() {
+              _historyError = 'No historical NAV data available for this period';
+              _isLoadingHistory = false;
+            });
+          }
+        }
+      } else {
+        // Fetch historical prices for stocks/ETFs
+        final histData = await StockPriceService.fetchHistoricalPrices(
+          widget.item.symbol,
+          period: _selectedPeriod,
+        );
+        if (mounted) {
+          setState(() {
+            _historicalData = histData;
+            _isLoadingHistory = false;
+            // If histData is null or has no prices, set an error
+            if (histData == null || histData.prices.isEmpty) {
+              _historyError = 'No data available';
+            }
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -82,6 +172,26 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
           _isLoadingHistory = false;
         });
       }
+    }
+  }
+
+  // Convert period string to number of days
+  int _getPeriodDays(String period) {
+    switch (period) {
+      case '1mo':
+        return 30;
+      case '3mo':
+        return 90;
+      case '6mo':
+        return 180;
+      case '1y':
+        return 365;
+      case '2y':
+        return 730;
+      case '5y':
+        return 1825;
+      default:
+        return 365;
     }
   }
 
@@ -186,6 +296,9 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
+    final currencySymbol = settings.currencySymbol;
+    
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.item.symbol),
@@ -337,7 +450,7 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  FinancialCalculations.formatCurrency(_priceData!.currentPrice),
+                                  FinancialCalculations.formatCurrency(_priceData!.currentPrice, symbol: currencySymbol),
                                   style: const TextStyle(
                                     fontSize: 36,
                                     fontWeight: FontWeight.bold,
@@ -394,7 +507,7 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                                 ),
                               ),
                               Text(
-                                FinancialCalculations.formatCurrency(_priceData!.previousClose!),
+                                FinancialCalculations.formatCurrency(_priceData!.previousClose!, symbol: currencySymbol),
                                 style: const TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
@@ -488,23 +601,33 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                             border: Border.all(color: Colors.orange[200]!),
                           ),
                           child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
                                 children: [
-                                  Icon(Icons.info_outline, color: Colors.orange[700]),
+                                  Icon(Icons.error_outline, color: Colors.orange[700]),
                                   const SizedBox(width: 8),
                                   const Expanded(
                                     child: Text(
-                                      'Unable to load historical data',
+                                      'Unable to Load Historical Data',
                                       style: TextStyle(fontWeight: FontWeight.bold),
                                     ),
                                   ),
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              const Text(
-                                'Historical price data is currently unavailable due to browser restrictions.',
-                                style: TextStyle(fontSize: 12),
+                              Text(
+                                _historyError!,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              const SizedBox(height: 12),
+                              ElevatedButton.icon(
+                                onPressed: _fetchHistoricalPrices,
+                                icon: const Icon(Icons.refresh, size: 16),
+                                label: const Text('Retry'),
+                                style: ElevatedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                ),
                               ),
                             ],
                           ),
@@ -561,7 +684,7 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  FinancialCalculations.formatCurrency(widget.item.targetPrice!),
+                                  FinancialCalculations.formatCurrency(widget.item.targetPrice!, symbol: currencySymbol),
                                   style: TextStyle(
                                     fontSize: 24,
                                     fontWeight: FontWeight.bold,
@@ -598,7 +721,7 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      '${distanceAmount >= 0 ? '+' : ''}${FinancialCalculations.formatCurrency(distanceAmount.abs())}',
+                                      '${distanceAmount >= 0 ? '+' : ''}${FinancialCalculations.formatCurrency(distanceAmount.abs(), symbol: currencySymbol)}',
                                       style: TextStyle(
                                         fontSize: 12,
                                         color: Colors.grey[600],
@@ -679,7 +802,7 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                       _buildDetailRow(
                         'Target Price',
                         widget.item.targetPrice != null
-                            ? FinancialCalculations.formatCurrency(widget.item.targetPrice!)
+                            ? FinancialCalculations.formatCurrency(widget.item.targetPrice!, symbol: currencySymbol)
                             : 'Not set',
                       ),
                       if (widget.item.notes != null && widget.item.notes!.isNotEmpty) ...[
@@ -725,7 +848,7 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                       ),
                       const SizedBox(height: 8),
                       const Text(
-                        'Use the watchlist to track stocks and ETFs you\'re interested in but haven\'t invested in yet. Set target prices to be notified when it\'s a good time to buy!',
+                        'Use the watchlist to track stocks and ETFs you\'re interested in but haven\'t invested in yet. Set target prices and monitor historical trends to identify the best time to buy!',
                         style: TextStyle(fontSize: 12),
                       ),
                     ],

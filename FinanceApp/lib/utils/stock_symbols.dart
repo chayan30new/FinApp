@@ -84,14 +84,16 @@ class AustralianStockSymbols {
   }
 
   // Search for symbols
-  static List<MapEntry<String, String>> search(String query) {
+  static Map<String, String> search(String query) {
     final allSymbols = getAllSymbols();
     final queryLower = query.toLowerCase();
     
-    return allSymbols.entries.where((entry) {
-      return entry.key.toLowerCase().contains(queryLower) ||
-             entry.value.toLowerCase().contains(queryLower);
-    }).toList();
+    return Map.fromEntries(
+      allSymbols.entries.where((entry) {
+        return entry.key.toLowerCase().contains(queryLower) ||
+               entry.value.toLowerCase().contains(queryLower);
+      }),
+    );
   }
 
   // Get suggestions based on partial input
@@ -105,5 +107,18 @@ class AustralianStockSymbols {
         .where((symbol) => symbol.startsWith(partialUpper))
         .take(5)
         .toList();
+  }
+
+  // Get all categories
+  static List<String> getCategories() {
+    return [
+      'Banks',
+      'Miners',
+      'Tech',
+      'ETFs',
+      'Retail',
+      'Telecom',
+      'Healthcare',
+    ];
   }
 }

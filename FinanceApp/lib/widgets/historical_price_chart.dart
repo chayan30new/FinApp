@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../services/stock_price_service.dart';
+import '../providers/settings_provider.dart';
 import '../utils/calculations.dart';
 import 'dart:math' as math;
 
@@ -20,6 +22,9 @@ class HistoricalPriceChart extends StatefulWidget {
 class _HistoricalPriceChartState extends State<HistoricalPriceChart> {
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
+    final currencySymbol = settings.currencySymbol;
+
     if (widget.data.prices.isEmpty) {
       return const Center(
         child: Text('No historical data available'),
@@ -90,7 +95,7 @@ class _HistoricalPriceChartState extends State<HistoricalPriceChart> {
                     ),
                   ),
                   Text(
-                    '${FinancialCalculations.formatCurrency(minPrice)} - ${FinancialCalculations.formatCurrency(maxPrice)}',
+                    '${FinancialCalculations.formatCurrency(minPrice, symbol: currencySymbol)} - ${FinancialCalculations.formatCurrency(maxPrice, symbol: currencySymbol)}',
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w500,
@@ -225,7 +230,7 @@ class _HistoricalPriceChartState extends State<HistoricalPriceChart> {
                           ),
                           children: [
                             TextSpan(
-                              text: FinancialCalculations.formatCurrency(price.close),
+                              text: FinancialCalculations.formatCurrency(price.close, symbol: currencySymbol),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,

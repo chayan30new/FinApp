@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import '../models/investment.dart';
 import '../models/transaction.dart';
 import '../providers/investment_provider.dart';
+import '../providers/settings_provider.dart';
+import '../utils/stock_symbols_provider.dart';
+import '../services/mutual_fund_nav_service.dart';
 
 class AddInvestmentScreen extends StatefulWidget {
   final Investment? investment;
@@ -22,6 +25,10 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
   final _tickerController = TextEditingController();
   DateTime _selectedDate = DateTime.now();
   bool _isLoading = false;
+  bool _isCalculatingQuantity = false;
+  String? _navCalculationMessage;
+  bool _quantityWasAutoCalculated = false;
+  bool _isSettingQuantityProgrammatically = false;
 
   @override
   void initState() {
@@ -53,6 +60,76 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
     if (picked != null && picked != _selectedDate) {
       setState(() {
         _selectedDate = picked;
+      });
+      // Auto-calculate quantity if conditions are met
+      _autoCalculateQuantityForMutualFund();
+    }
+  }
+
+  /// Auto-calculate quantity for mutual funds based on amount and NAV on investment date
+  Future<void> _autoCalculateQuantityForMutualFund() async {
+    // Only auto-calculate if:
+    // 1. Ticker symbol is provided
+    // 2. Amount is provided
+    // 3. It's a mutual fund (not a stock)
+    // 4. Quantity field is empty OR was previously auto-calculated (not manually entered)
+    
+    final ticker = _tickerController.text.trim().toUpperCase();
+    if (ticker.isEmpty || _amountController.text.isEmpty) {
+      return;
+    }
+    
+    // Check if it's a mutual fund (not a stock with .NS or .AX suffix)
+    if (ticker.endsWith('.NS') || ticker.endsWith('.AX')) {
+      return; // It's a stock, not a mutual fund
+    }
+    
+    // Don't override if user manually entered quantity (only recalculate if it was auto-calculated before)
+    if (_quantityController.text.isNotEmpty && !_quantityWasAutoCalculated) {
+      return;
+    }
+    
+    final amount = double.tryParse(_amountController.text);
+    if (amount == null || amount <= 0) {
+      return;
+    }
+    
+    setState(() {
+      _isCalculatingQuantity = true;
+      _navCalculationMessage = 'Fetching NAV for ${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}...';
+    });
+    
+    try {
+      // Fetch NAV for the investment date
+      final navData = await MutualFundNavService.fetchNavForDateBySymbol(
+        ticker,
+        _selectedDate,
+      );
+      
+      if (navData != null && navData.nav > 0) {
+        // Calculate quantity = amount / NAV
+        final quantity = amount / navData.nav;
+        
+        setState(() {
+          _isSettingQuantityProgrammatically = true;
+          _quantityController.text = quantity.toStringAsFixed(4);
+          _navCalculationMessage = 
+            '✓ Auto-calculated: ₹${amount.toStringAsFixed(2)} ÷ NAV ₹${navData.nav.toStringAsFixed(2)} = ${quantity.toStringAsFixed(4)} units';
+          _isCalculatingQuantity = false;
+          _quantityWasAutoCalculated = true; // Mark as auto-calculated
+          _isSettingQuantityProgrammatically = false;
+        });
+      } else {
+        setState(() {
+          _navCalculationMessage = 'NAV not found for this date. Please enter quantity manually.';
+          _isCalculatingQuantity = false;
+          _quantityWasAutoCalculated = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _navCalculationMessage = 'Error fetching NAV: $e';
+        _isCalculatingQuantity = false;
       });
     }
   }
@@ -131,6 +208,9 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.investment != null;
+    final settings = Provider.of<SettingsProvider>(context);
+    final isIndianMarket = settings.selectedMarket == Market.india;
+    final currencySymbol = settings.currencySymbol;
 
     return Scaffold(
       appBar: AppBar(
@@ -171,24 +251,46 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _tickerController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Ticker Symbol (Optional)',
-                hintText: 'e.g., VAS.AX for Australian stocks',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.show_chart),
-                helperText: 'Add .AX suffix for ASX stocks (e.g., CBA.AX, BHP.AX)',
+                hintText: isIndianMarket 
+                    ? 'e.g., RELIANCE.NS for stocks, HDFC-TOP100 for MFs'
+                    : 'e.g., VAS.AX for Australian stocks',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.show_chart),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.search),
+                  onPressed: () => _showStockSearch(context, isIndianMarket),
+                  tooltip: 'Search stocks/ETFs/MFs',
+                ),
+                helperText: isIndianMarket
+                    ? 'NSE stocks: .NS suffix (TCS.NS) | MFs: fund code (HDFC-TOP100). Click 🔍 to search'
+                    : 'Add .AX suffix for ASX stocks (e.g., CBA.AX, BHP.AX). Click 🔍 to search',
               ),
               textCapitalization: TextCapitalization.characters,
+              onChanged: (value) {
+                // Auto-calculate quantity when ticker changes
+                _autoCalculateQuantityForMutualFund();
+              },
             ),
             if (!isEdit) ...[
               const SizedBox(height: 16),
               TextFormField(
                 controller: _amountController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Initial Amount',
                   hintText: 'e.g., 10000',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.attach_money),
+                  border: const OutlineInputBorder(),
+                  prefixIcon: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Text(
+                      currencySymbol,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 ),
                 keyboardType: TextInputType.number,
                 validator: (value) {
@@ -203,15 +305,36 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
                   }
                   return null;
                 },
+                onChanged: (value) {
+                  // Auto-calculate quantity when amount changes
+                  _autoCalculateQuantityForMutualFund();
+                },
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _quantityController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Initial Quantity (Optional)',
                   hintText: 'e.g., 100 (shares/units)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.shopping_basket),
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.shopping_basket),
+                  suffixIcon: _tickerController.text.isNotEmpty &&
+                          !_tickerController.text.toUpperCase().endsWith('.NS') &&
+                          !_tickerController.text.toUpperCase().endsWith('.AX')
+                      ? IconButton(
+                          icon: _isCalculatingQuantity
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.calculate),
+                          onPressed: _isCalculatingQuantity ? null : _autoCalculateQuantityForMutualFund,
+                          tooltip: 'Auto-calculate from NAV',
+                        )
+                      : null,
+                  helperText: _navCalculationMessage,
+                  helperMaxLines: 3,
                 ),
                 keyboardType: TextInputType.number,
                 validator: (value) {
@@ -224,6 +347,27 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
                     }
                   }
                   return null;
+                },
+                onChanged: (value) {
+                  // Don't react if we're setting it programmatically
+                  if (_isSettingQuantityProgrammatically) {
+                    return;
+                  }
+                  
+                  // If user manually clears the field, allow auto-calculation again
+                  if (value.isEmpty) {
+                    setState(() {
+                      _quantityWasAutoCalculated = false;
+                      _navCalculationMessage = null;
+                    });
+                  }
+                  // If user types anything, mark as manual entry
+                  else {
+                    setState(() {
+                      _quantityWasAutoCalculated = false;
+                      _navCalculationMessage = null;
+                    });
+                  }
                 },
               ),
               const SizedBox(height: 16),
@@ -259,6 +403,79 @@ class _AddInvestmentScreenState extends State<AddInvestmentScreen> {
                       ),
                     )
                   : Text(isEdit ? 'Update Investment' : 'Add Investment'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showStockSearch(BuildContext context, bool isIndianMarket) {
+    final allSymbols = StockSymbolsProvider.getAllSymbols(isIndianMarket);
+    final searchController = TextEditingController();
+    List<MapEntry<String, String>> filteredSymbols = allSymbols.entries.toList();
+
+    showDialog(
+      context: context,
+      builder: (searchContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(isIndianMarket 
+              ? 'Search Stocks/ETFs/Mutual Funds'
+              : 'Search Stocks/ETFs'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: searchController,
+                  decoration: const InputDecoration(
+                    labelText: 'Search',
+                    hintText: 'Type symbol or name...',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (query) {
+                    setState(() {
+                      if (query.isEmpty) {
+                        filteredSymbols = allSymbols.entries.toList();
+                      } else {
+                        filteredSymbols = StockSymbolsProvider.search(query, isIndianMarket).entries.toList();
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 300,
+                  child: filteredSymbols.isEmpty
+                      ? const Center(child: Text('No results found'))
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: filteredSymbols.length,
+                          itemBuilder: (context, index) {
+                            final entry = filteredSymbols[index];
+                            return ListTile(
+                              title: Text(entry.key),
+                              subtitle: Text(entry.value),
+                              onTap: () {
+                                _tickerController.text = entry.key;
+                                _nameController.text = entry.value;
+                                Navigator.pop(context);
+                                // Trigger auto-calculation after selecting ticker
+                                _autoCalculateQuantityForMutualFund();
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
             ),
           ],
         ),

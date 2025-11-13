@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/investment_provider.dart';
+import '../providers/settings_provider.dart';
 import '../models/investment.dart';
 import '../utils/calculations.dart';
 import 'add_investment_screen.dart';
@@ -12,11 +13,42 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
+    
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Investment Tracker'),
+        title: Text('Investment Tracker - ${settings.marketName}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
+          PopupMenuButton<Market>(
+            icon: const Icon(Icons.public),
+            tooltip: 'Change Market',
+            onSelected: (Market market) {
+              settings.setMarket(market);
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: Market.india,
+                child: Row(
+                  children: [
+                    Text('🇮🇳', style: TextStyle(fontSize: 20)),
+                    SizedBox(width: 8),
+                    Text('India (NSE/BSE)'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: Market.australia,
+                child: Row(
+                  children: [
+                    Text('🇦🇺', style: TextStyle(fontSize: 20)),
+                    SizedBox(width: 8),
+                    Text('Australia (ASX)'),
+                  ],
+                ),
+              ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.playlist_add_check),
             onPressed: () {
@@ -41,7 +73,7 @@ class HomeScreen extends StatelessWidget {
             return _buildEmptyState(context);
           }
 
-          return _buildInvestmentList(context, provider.investments);
+          return _buildInvestmentList(context, provider.investments, settings.currencySymbol);
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -87,7 +119,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildInvestmentList(BuildContext context, List<Investment> investments) {
+  Widget _buildInvestmentList(BuildContext context, List<Investment> investments, String currencySymbol) {
     // Calculate totals
     double totalInvested = 0;
     double totalCurrent = 0;
@@ -126,13 +158,13 @@ class HomeScreen extends StatelessWidget {
                     _buildSummaryItem(
                       context,
                       'Total Invested',
-                      FinancialCalculations.formatCurrency(totalInvested),
+                      FinancialCalculations.formatCurrency(totalInvested, symbol: currencySymbol),
                       Colors.blue,
                     ),
                     _buildSummaryItem(
                       context,
                       'Current Value',
-                      FinancialCalculations.formatCurrency(totalCurrent),
+                      FinancialCalculations.formatCurrency(totalCurrent, symbol: currencySymbol),
                       Colors.green,
                     ),
                   ],
@@ -154,7 +186,7 @@ class HomeScreen extends StatelessWidget {
             itemCount: investments.length,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemBuilder: (context, index) {
-              return _buildInvestmentCard(context, investments[index]);
+              return _buildInvestmentCard(context, investments[index], currencySymbol);
             },
           ),
         ),
@@ -191,7 +223,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildInvestmentCard(BuildContext context, Investment investment) {
+  Widget _buildInvestmentCard(BuildContext context, Investment investment, String currencySymbol) {
     double absoluteReturn = FinancialCalculations.calculateAbsoluteReturn(
       invested: investment.netInvested,
       currentValue: investment.effectiveCurrentValue,
@@ -266,7 +298,7 @@ class HomeScreen extends StatelessWidget {
                       ),
                       Text(
                         FinancialCalculations.formatCurrency(
-                            investment.netInvested),
+                            investment.netInvested, symbol: currencySymbol),
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                         ),
@@ -285,7 +317,7 @@ class HomeScreen extends StatelessWidget {
                       ),
                       Text(
                         FinancialCalculations.formatCurrency(
-                            investment.effectiveCurrentValue),
+                            investment.effectiveCurrentValue, symbol: currencySymbol),
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                         ),

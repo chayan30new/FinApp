@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'providers/investment_provider.dart';
 import 'providers/watchlist_provider.dart';
+import 'providers/settings_provider.dart';
 
 void main() {
   runApp(const MyApp());
@@ -15,6 +16,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        ChangeNotifierProvider(create: (context) => SettingsProvider()),
         ChangeNotifierProvider(create: (context) => InvestmentProvider()),
         ChangeNotifierProvider(create: (context) => WatchlistProvider()),
       ],
